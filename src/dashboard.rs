@@ -39,7 +39,7 @@ pub async fn serve_dashboard(project_dir: PathBuf, port: u16) {
 }
 
 async fn dashboard(State(state): State<AppState>) -> Html<String> {
-    let store = state.store.lock().unwrap();
+    let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
     let memories = store.list(None, 10000).unwrap_or_default();
     let count = store.count().unwrap_or(0);
     let tags = store.list_tags().unwrap_or_default();
@@ -157,13 +157,13 @@ async fn dashboard(State(state): State<AppState>) -> Html<String> {
 }
 
 async fn api_memories(State(state): State<AppState>) -> String {
-    let store = state.store.lock().unwrap();
+    let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
     let memories = store.list(None, 10000).unwrap_or_default();
     serde_json::to_string_pretty(&memories).unwrap()
 }
 
 async fn api_stats(State(state): State<AppState>) -> String {
-    let store = state.store.lock().unwrap();
+    let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
     let count = store.count().unwrap_or(0);
     let by_kind = store.count_by_kind().unwrap_or_default();
     let tags = store.list_tags().unwrap_or_default();

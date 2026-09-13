@@ -94,24 +94,38 @@ impl MemoryStore {
     pub fn import_memories(&self, memories: Vec<MemoryInput>) -> anyhow::Result<usize> {
         let mut c = 0; for i in memories { self.add(i)?; c += 1; } Ok(c)
     }
-    /// Inserts a memory preserving its existing id/timestamps (used by snapshot restore,
-    /// so related_ids captured in the snapshot still resolve after restore).
-    pub fn add_with_id(&self, m: &Memory) -> anyhow::Result<()> {
-        self.conn.execute("INSERT INTO memories(id,kind,key,content,tags,related_ids,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![m.id, m.kind.to_string(), m.key, m.content, serde_json::to_string(&m.tags)?, serde_json::to_string(&m.related_ids)?, m.created_at.to_rfc3339(), m.updated_at.to_rfc3339()])?;
-        self.conn.execute("INSERT INTO audit_log(action,memory_id,details,created_at) VALUES(?1,?2,?3,?4)", params!["restore", m.id, format!("{}: {}", m.kind, m.key), Utc::now().to_rfc3339()])?;
-        Ok(())
+    /// Atomically replaces the entire store contents with `memories`, preserving each
+    /// memory's original id (so related_ids captured in a snapshot still resolve after
+    /// restore). Used by snapshot restore; all-or-nothing so a crash mid-restore can't
+    /// leave the store partially emptied.
+    pub fn replace_all(&self, memories: &[Memory]) -> anyhow::Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM memories", [])?;
+        let mut count = 0;
+        for m in memories {
+            tx.execute("INSERT INTO memories(id,kind,key,content,tags,related_ids,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![m.id, m.kind.to_string(), m.key, m.content, serde_json::to_string(&m.tags)?, serde_json::to_string(&m.related_ids)?, m.created_at.to_rfc3339(), m.updated_at.to_rfc3339()])?;
+            tx.execute("INSERT INTO audit_log(action,memory_id,details,created_at) VALUES(?1,?2,?3,?4)", params!["restore", m.id, format!("{}: {}", m.kind, m.key), Utc::now().to_rfc3339()])?;
+            count += 1;
+        }
+        tx.commit()?;
+        Ok(count)
     }
     /// Deletes `remove_ids` and writes `keep` in a single transaction, so a duplicate merge
-    /// never leaves the survivor un-updated while the duplicates are already gone.
+    /// never leaves the survivor un-updated while the duplicates are already gone. Aborts
+    /// (rolling back the deletes too) if `keep` no longer exists, instead of reporting
+    /// success while silently losing the merged content.
     pub fn merge_duplicates(&self, keep: &Memory, remove_ids: &[String]) -> anyhow::Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let mut removed = 0usize;
         for id in remove_ids {
             removed += tx.execute("DELETE FROM memories WHERE id=?1", params![id])?;
         }
-        tx.execute("UPDATE memories SET kind=?1,key=?2,content=?3,tags=?4,related_ids=?5,updated_at=?6 WHERE id=?7",
+        let updated = tx.execute("UPDATE memories SET kind=?1,key=?2,content=?3,tags=?4,related_ids=?5,updated_at=?6 WHERE id=?7",
             params![keep.kind.to_string(), keep.key, keep.content, serde_json::to_string(&keep.tags)?, serde_json::to_string(&keep.related_ids)?, Utc::now().to_rfc3339(), keep.id])?;
+        if updated == 0 {
+            anyhow::bail!("memory '{}' to keep no longer exists; aborting merge", keep.id);
+        }
         tx.commit()?;
         Ok(removed)
     }

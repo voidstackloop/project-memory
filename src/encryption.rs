@@ -36,7 +36,7 @@ pub fn encrypt(content: &str, key: &str) -> String {
 }
 
 pub fn decrypt(encoded: &str, key: &str) -> anyhow::Result<String> {
-    if key.is_empty() { return Ok(encoded.to_string()); }
+    if key.is_empty() { anyhow::bail!("cannot decrypt: no encryption key provided"); }
     let bytes = hex::decode(encoded).map_err(|e| anyhow::anyhow!("invalid encrypted content: {e}"))?;
     if bytes.len() < SALT_LEN + NONCE_LEN {
         anyhow::bail!("encrypted content is truncated");

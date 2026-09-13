@@ -1,4 +1,5 @@
 
+use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 
 pub fn create_backup(project_dir: &Path) -> anyhow::Result<String> {
@@ -35,7 +36,11 @@ pub fn list_backups(project_dir: &Path) -> anyhow::Result<Vec<BackupInfo>> {
     for entry in std::fs::read_dir(&backup_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "db") {
+        // Only match the backup_<timestamp>.db convention — excludes pre_restore_*.db safety
+        // copies, which aren't regular backups and shouldn't be listed or swept by cleanup.
+        let is_backup_file = path.extension().is_some_and(|e| e == "db")
+            && path.file_stem().and_then(|n| n.to_str()).is_some_and(|s| s.starts_with("backup_"));
+        if is_backup_file {
             let metadata = std::fs::metadata(&path)?;
             let name = path.file_stem()
                 .and_then(|n| n.to_str())
@@ -64,13 +69,20 @@ pub fn restore_backup(project_dir: &Path, backup_name: &str) -> anyhow::Result<(
     }
 
     // Validate the backup is actually a readable memory store before touching live data.
-    crate::store::MemoryStore::open(&backup_path)
-        .map_err(|e| anyhow::anyhow!("Backup '{}' is not a valid memory store, refusing to restore: {}", backup_name, e))?;
+    // Read-only open + a query against the memories table: a plain MemoryStore::open would
+    // silently CREATE TABLE IF NOT EXISTS into an empty/foreign file and "validate" it wrongly.
+    {
+        let conn = Connection::open_with_flags(&backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| anyhow::anyhow!("Backup '{}' is not a valid memory store, refusing to restore: {}", backup_name, e))?;
+        conn.query_row("SELECT COUNT(*) FROM memories", [], |r| r.get::<_, i64>(0))
+            .map_err(|e| anyhow::anyhow!("Backup '{}' is not a valid memory store, refusing to restore: {}", backup_name, e))?;
+    }
 
     let db_path = project_dir.join(".memory").join("store.db");
     if db_path.exists() {
-        // Safety copy of current state so a bad restore can still be undone.
-        let safety_path = backup_dir.join(format!("pre_restore_{}.db", chrono::Utc::now().format("%Y%m%d_%H%M%S")));
+        // Safety copy of current state so a bad restore can still be undone. Named outside
+        // the backup_* naming convention so list_backups/cleanup_backups don't sweep it up.
+        let safety_path = backup_dir.join(format!("pre_restore_{}_{}.db", chrono::Utc::now().format("%Y%m%d_%H%M%S"), &uuid::Uuid::new_v4().to_string()[..8]));
         std::fs::copy(&db_path, &safety_path)?;
     }
     std::fs::copy(&backup_path, &db_path)?;

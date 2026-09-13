@@ -1,4 +1,4 @@
-use axum::{extract::State, routing::post, Router};
+use axum::{extract::State, response::IntoResponse, routing::post, Router};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +30,12 @@ pub async fn serve(project_dir: PathBuf, port: u16) {
     axum::serve(listener, app).await.expect("Server failed");
 }
 
-async fn handle_mcp(State(state): State<AppState>, body: String) -> String {
-    handle_request_line(&body, &state.store).unwrap_or_default()
+async fn handle_mcp(State(state): State<AppState>, body: String) -> impl IntoResponse {
+    // handle_request_line does blocking rusqlite I/O — run it off the async executor so a
+    // slow query doesn't stall every other in-flight request on this worker thread.
+    let store = state.store.clone();
+    let response = tokio::task::spawn_blocking(move || handle_request_line(&body, &store).unwrap_or_default())
+        .await
+        .unwrap_or_default();
+    ([("content-type", "application/json")], response)
 }

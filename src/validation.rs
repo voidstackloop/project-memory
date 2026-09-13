@@ -32,13 +32,19 @@ pub fn format_validation(result: &ValidationResult) -> String {
     o
 }
 
-pub fn auto_fix(memories: &mut Vec<Memory>) -> usize {
-    let mut fixed = 0;
+/// Dedupes tags in-place, returning the ids of memories actually changed — callers should
+/// only re-save those, not every memory in the list, to avoid bumping updated_at on rows
+/// that had nothing to fix.
+pub fn auto_fix(memories: &mut Vec<Memory>) -> Vec<String> {
+    let mut fixed_ids = Vec::new();
     for m in memories.iter_mut() {
-        let original_len = m.tags.len();
-        m.tags.sort();
-        m.tags.dedup();
-        if m.tags.len() != original_len { fixed += 1; }
+        let mut deduped = m.tags.clone();
+        deduped.sort();
+        deduped.dedup();
+        if deduped.len() != m.tags.len() {
+            m.tags = deduped;
+            fixed_ids.push(m.id.clone());
+        }
     }
-    fixed
+    fixed_ids
 }

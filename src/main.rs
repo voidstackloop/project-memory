@@ -1364,17 +1364,12 @@ async fn main() {
                 let store = open_store(&project_dir);
                 match project_memory::snapshot::load_snapshot(&project_dir, &id) {
                     Ok(Some(s)) => {
-                        // Clear existing and import from snapshot, preserving each memory's
-                        // original id so related_ids captured in the snapshot still resolve.
-                        let current = store.export_json().unwrap_or_default();
-                        for m in &current {
-                            let _ = store.delete(&m.id);
+                        // Atomically replace the store with the snapshot, preserving each
+                        // memory's original id so related_ids captured in it still resolve.
+                        match store.replace_all(&s.memories) {
+                            Ok(count) => println!("{} Restored snapshot '{}' — {} memories", "[ok]".green(), s.name, count),
+                            Err(e) => println!("{} Failed to restore snapshot: {}", "[x]".red(), e),
                         }
-                        let mut count = 0;
-                        for m in &s.memories {
-                            if store.add_with_id(m).is_ok() { count += 1; }
-                        }
-                        println!("{} Restored snapshot '{}' — {} memories", "[ok]".green(), s.name, count);
                     }
                     Ok(None) => {
                         println!("{} Snapshot '{}' not found", "[x]".red(), id);
@@ -2222,9 +2217,9 @@ async fn main() {
             
             if fix && result.auto_fixable > 0 {
                 let mut memories = store.export_json().expect("Failed to export");
-                let fixed = project_memory::validation::auto_fix(&mut memories);
-                
-                for m in &memories {
+                let fixed_ids = project_memory::validation::auto_fix(&mut memories);
+
+                for m in memories.iter().filter(|m| fixed_ids.contains(&m.id)) {
                     let _ = store.update(&m.id, project_memory::types::MemoryInput {
                         kind: m.kind.clone(),
                         key: m.key.clone(),
@@ -2233,8 +2228,8 @@ async fn main() {
                         related_ids: m.related_ids.clone(),
                     });
                 }
-                
-                println!("{} Auto-fixed {} memories", "[ok]".green(), fixed);
+
+                println!("{} Auto-fixed {} memories", "[ok]".green(), fixed_ids.len());
             }
         }
 
