@@ -5,6 +5,8 @@ conventions, decisions, patterns, and context in a local SQLite database and
 serves them to any MCP-compatible agent (Claude Code, Cursor, and others) —
 so an agent stops re-deriving the same context every session.
 
+![project-memory dashboard](docs/images/dashboard.png)
+
 ## Why
 
 AI coding assistants re-read a codebase from scratch on every conversation.
@@ -101,6 +103,16 @@ Exposes memory CRUD and search over HTTP for integrations that don't speak
 MCP.
 
 ## Architecture
+
+```mermaid
+graph LR
+    CLI["pmem CLI"] --> Store[("MemoryStore\n(SQLite)")]
+    Stdio["MCP stdio\n(Claude Code, Cursor)"] --> Handler["shared JSON-RPC\nhandler"]
+    HTTP["MCP HTTP\npmem serve"] --> Handler
+    Handler --> Store
+    REST["REST API\npmem api"] --> Store
+    Dashboard["Web dashboard\npmem dashboard"] --> Store
+```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the CLI, storage
 layer, and server transports fit together.
