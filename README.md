@@ -105,6 +105,13 @@ MCP.
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the CLI, storage
 layer, and server transports fit together.
 
+## Benchmark
+
+[docs/BENCHMARK.md](docs/BENCHMARK.md) — [OpenCode](https://opencode.ai) (an
+independent third-party agent) connecting to and calling tools on `pmem
+stdio` over live MCP, plus search/insert/list performance numbers at 1,000
+memories.
+
 ## Development
 
 ```bash
