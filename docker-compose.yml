@@ -1,0 +1,24 @@
+services:
+  dashboard:
+    build: .
+    command: ["dashboard", "--port", "3778"]
+    ports:
+      - "3778:3778"
+    volumes:
+      - .:/workspace
+
+  api:
+    build: .
+    command: ["api", "--port", "3779"]
+    ports:
+      - "3779:3779"
+    volumes:
+      - .:/workspace
+
+  mcp:
+    build: .
+    command: ["serve", "--port", "3777"]
+    ports:
+      - "3777:3777"
+    volumes:
+      - .:/workspace

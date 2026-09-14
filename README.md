@@ -112,6 +112,9 @@ cargo build
 cargo test
 ```
 
+For running the dashboard, REST API, and MCP HTTP server together via
+Docker, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
 ## License
 
 MIT
