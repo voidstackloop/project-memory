@@ -107,13 +107,46 @@ layer, and server transports fit together.
 
 ## Benchmark
 
-[docs/BENCHMARK.md](docs/BENCHMARK.md) — [OpenCode](https://opencode.ai) (an
-independent third-party agent) connecting to and calling tools on `pmem
-stdio` over live MCP; a 50-query token-usage benchmark showing
-`memory_search` averages ~231x cheaper than reading the source files that
-contain the same facts (149–200 tokens across all 50, not one lucky
-example); performance at 100/1,000/5,000 memories; and binary size,
-cold-start, storage, and encryption-throughput numbers.
+Full methodology and reproduction steps: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Everything below was measured against the `v0.2.0` release build, not
+estimated.
+
+**A real, independent MCP client connects to it.** [OpenCode](https://opencode.ai)
+— unrelated to this project — was pointed at `pmem stdio` via a standard
+`opencode.json` config:
+
+```
+$ opencode mcp list
+●  ✓ project-memory  connected
+```
+
+**It actually saves tokens**, the reason the tool exists. 50 real facts
+about this codebase were stored as memories, then queried with 50 separate
+`memory_search` calls (one plausible question per fact) — every one found
+its target — and compared against the token cost of reading the 16 source
+and doc files those facts live in:
+
+| | Tokens | vs. reading the source |
+|---|---:|---:|
+| `memory_search`, mean of 50 queries | 168 (range 149–200) | **~231x cheaper** |
+| `memory_context`, all 50 facts in one call | 2,022 | **~19x cheaper** |
+| Reading the 16 files those facts come from | 38,921 | — |
+
+**It's fast, and honest about where that stops being true:**
+
+| Memories | Insert | Fuzzy search | List all | Stats |
+|---:|---:|---:|---:|---:|
+| 100 | 126/sec | 1.1ms | 1.1ms | 0.9ms |
+| 1,000 | 128/sec | 3.9ms | 5.4ms | 2.2ms |
+| 5,000 | 103/sec | 26.4ms | 29.5ms | 16.7ms |
+
+Growth from 1,000 → 5,000 is roughly linear rather than flat — a known
+efficiency gap (a couple of `store.rs` paths score/aggregate in memory
+instead of in SQL), not a claim that performance never degrades.
+
+**Footprint:** 9.9 MB release binary, ~2.1ms cold start (a fresh
+`pmem stdio` process per MCP session), ~450–860 bytes/memory on disk
+depending on store size.
 
 ## Development
 
