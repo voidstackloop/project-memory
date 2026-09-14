@@ -140,9 +140,19 @@ and doc files those facts live in:
 | 1,000 | 128/sec | 3.9ms | 5.4ms | 2.2ms |
 | 5,000 | 103/sec | 26.4ms | 29.5ms | 16.7ms |
 
-Growth from 1,000 → 5,000 is roughly linear rather than flat — a known
-efficiency gap (a couple of `store.rs` paths score/aggregate in memory
-instead of in SQL), not a claim that performance never degrades.
+Growth isn't flat — a known efficiency gap (a couple of `store.rs` paths
+score/aggregate in memory instead of in SQL), not a claim that performance
+never degrades. Full table goes to 10,000 in
+[docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+**It holds up under concurrent load — and the benchmark caught a real bug
+while checking.** Building this surfaced that `api.rs`/`dashboard.rs` were
+running blocking SQLite calls straight on the async executor — the same bug
+already fixed once in `mcp.rs`, just never carried over. Fixed, then
+measured: with 100 concurrent searches queued behind `MemoryStore`'s single
+SQLite connection (each taking ~125ms), an unrelated `/api/health` call
+stayed at 0.3ms mean — proving one slow store operation can't starve the
+rest of the server.
 
 **Footprint:** 9.9 MB release binary, ~2.1ms cold start (a fresh
 `pmem stdio` process per MCP session), ~450–860 bytes/memory on disk

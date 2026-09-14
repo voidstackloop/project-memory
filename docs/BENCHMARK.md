@@ -135,9 +135,54 @@ REST API, local SQLite, end-to-end including HTTP round trip:
 | 100 | 7.9ms/insert (126/sec) | 1.1ms | 1.1ms | 0.9ms |
 | 1,000 | 7.8ms/insert (128/sec) | 3.9ms | 5.4ms | 2.2ms |
 | 5,000 | 9.7ms/insert (103/sec) | 26.4ms | 29.5ms | 16.7ms |
+| 10,000 | 8.1ms/insert (124/sec) | 40.7ms | 216.7ms | 25.6ms |
+
+`list all` jumps disproportionately between 5,000 and 10,000 (7x latency for
+2x the data) — worth profiling before trusting it as a clean trend line; the
+other three columns stay roughly linear. Reported as observed, not smoothed
+over.
 
 Reproduce: `pmem init && pmem api --port 8799 &` then
 `python3 scripts/perf_benchmark.py [N]`.
+
+### Concurrency
+
+`api.rs` and `dashboard.rs` originally called the store directly inside
+their `async fn` handlers — a blocking rusqlite call running straight on the
+tokio executor, exactly the bug already fixed once in `mcp.rs`. Building
+this benchmark surfaced that it had never been carried over, so it's fixed
+now (`tokio::task::spawn_blocking` wraps every store access in both files)
+and the benchmark measures the corrected behavior:
+
+```
+concurrency |   req/sec |  p50 (ms) |  p95 (ms) |  p99 (ms) |  max (ms)
+----------------------------------------------------------------------
+          1 |     591.1 |       1.6 |       1.9 |       2.3 |       4.0
+         10 |     778.1 |      12.7 |      13.2 |      13.4 |      13.6
+         50 |     758.4 |      64.3 |      67.7 |      68.7 |      68.8
+        100 |     766.8 |     126.4 |     132.3 |     132.4 |     132.5
+```
+
+Throughput plateaus around ~780 req/sec past concurrency 10 rather than
+climbing — that's not a regression, it's `MemoryStore` wrapping a single
+SQLite connection behind one `Mutex` (documented in
+[ARCHITECTURE.md](ARCHITECTURE.md)), so total DB throughput is inherently
+serialized regardless of how many requests arrive at once. The actual thing
+worth checking is whether that serialization stalls the *whole* async
+executor — it doesn't:
+
+```
+/api/health under load: mean=0.3ms  max=0.5ms  (idle baseline is sub-millisecond)
+```
+
+`/api/health` touches no store state and stayed sub-millisecond while 100
+concurrent `/api/search` calls were queued behind the mutex, each taking
+~125ms. That's the actual claim `spawn_blocking` makes good on: one slow
+store operation can't starve unrelated requests, even though it can't make
+the single SQLite connection itself go faster.
+
+Reproduce: `pmem init && pmem api --port 8799 &` then
+`python3 scripts/concurrency_benchmark.py`.
 
 ## 4. Footprint
 

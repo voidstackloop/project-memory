@@ -7,7 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
 use crate::store::MemoryStore;
@@ -18,8 +18,20 @@ struct AppState {
     store: Arc<Mutex<MemoryStore>>,
 }
 
-fn lock(state: &AppState) -> MutexGuard<'_, MemoryStore> {
-    state.store.lock().unwrap_or_else(|e| e.into_inner())
+/// Runs `f` against the store on a blocking-pool thread, so a query doesn't stall the
+/// async executor (rusqlite is synchronous — every handler here does real disk I/O).
+async fn with_store<F, R>(state: &AppState, f: F) -> R
+where
+    F: FnOnce(&MemoryStore) -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let store = state.store.clone();
+    tokio::task::spawn_blocking(move || {
+        let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+        f(&guard)
+    })
+    .await
+    .expect("blocking task panicked")
 }
 
 pub async fn serve_api(project_dir: PathBuf, port: u16) {
@@ -56,14 +68,15 @@ struct ListParams {
 
 async fn list_memories(State(state): State<AppState>, Query(p): Query<ListParams>) -> impl IntoResponse {
     let kind = p.kind.and_then(|k| k.parse::<MemoryKind>().ok());
-    match lock(&state).list(kind, p.limit.unwrap_or(50)) {
+    let limit = p.limit.unwrap_or(50);
+    match with_store(&state, move |store| store.list(kind, limit)).await {
         Ok(memories) => Json(memories).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
 async fn get_memory(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match lock(&state).get(&id) {
+    match with_store(&state, move |store| store.get(&id)).await {
         Ok(Some(m)) => Json(m).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "memory not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -71,14 +84,14 @@ async fn get_memory(State(state): State<AppState>, Path(id): Path<String>) -> im
 }
 
 async fn add_memory(State(state): State<AppState>, Json(input): Json<MemoryInput>) -> impl IntoResponse {
-    match lock(&state).add(input) {
+    match with_store(&state, move |store| store.add(input)).await {
         Ok(m) => (StatusCode::CREATED, Json(m)).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
 }
 
 async fn update_memory(State(state): State<AppState>, Path(id): Path<String>, Json(input): Json<MemoryInput>) -> impl IntoResponse {
-    match lock(&state).update(&id, input) {
+    match with_store(&state, move |store| store.update(&id, input)).await {
         Ok(Some(m)) => Json(m).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "memory not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -86,7 +99,7 @@ async fn update_memory(State(state): State<AppState>, Path(id): Path<String>, Js
 }
 
 async fn delete_memory(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match lock(&state).delete(&id) {
+    match with_store(&state, move |store| store.delete(&id)).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, "memory not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -100,24 +113,26 @@ struct SearchParams {
 }
 
 async fn search_memories(State(state): State<AppState>, Query(p): Query<SearchParams>) -> impl IntoResponse {
-    match lock(&state).fuzzy_search(&p.q, p.limit.unwrap_or(10)) {
+    let limit = p.limit.unwrap_or(10);
+    match with_store(&state, move |store| store.fuzzy_search(&p.q, limit)).await {
         Ok(results) => Json(results).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
 async fn stats(State(state): State<AppState>) -> impl IntoResponse {
-    let store = lock(&state);
-    let count = store.count().unwrap_or(0);
-    let by_kind = store.count_by_kind().unwrap_or_default();
-    let tags = store.list_tags().unwrap_or_default();
-    Json(serde_json::json!({
-        "total": count,
-        "by_kind": by_kind.iter().map(|(k, c)| (k.to_string(), c)).collect::<Vec<_>>(),
-        "tags": tags,
-    }))
+    Json(with_store(&state, |store| {
+        let count = store.count().unwrap_or(0);
+        let by_kind = store.count_by_kind().unwrap_or_default();
+        let tags = store.list_tags().unwrap_or_default();
+        serde_json::json!({
+            "total": count,
+            "by_kind": by_kind.iter().map(|(k, c)| (k.to_string(), c)).collect::<Vec<_>>(),
+            "tags": tags,
+        })
+    }).await)
 }
 
 async fn tags(State(state): State<AppState>) -> impl IntoResponse {
-    Json(lock(&state).list_tags().unwrap_or_default())
+    Json(with_store(&state, |store| store.list_tags().unwrap_or_default()).await)
 }

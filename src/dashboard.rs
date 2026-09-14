@@ -14,6 +14,22 @@ struct AppState {
     store: Arc<Mutex<MemoryStore>>,
 }
 
+/// Runs `f` against the store on a blocking-pool thread, so a query doesn't stall the
+/// async executor (rusqlite is synchronous — every handler here does real disk I/O).
+async fn with_store<F, R>(state: &AppState, f: F) -> R
+where
+    F: FnOnce(&MemoryStore) -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let store = state.store.clone();
+    tokio::task::spawn_blocking(move || {
+        let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+        f(&guard)
+    })
+    .await
+    .expect("blocking task panicked")
+}
+
 pub async fn serve_dashboard(project_dir: PathBuf, port: u16) {
     let store = MemoryStore::open_in_project(&project_dir)
         .expect("Failed to open memory store. Run `pmem init` first.");
@@ -40,11 +56,15 @@ pub async fn serve_dashboard(project_dir: PathBuf, port: u16) {
 }
 
 async fn dashboard(State(state): State<AppState>) -> Html<String> {
-    let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-    let memories = store.list(None, 10000).unwrap_or_default();
-    let count = store.count().unwrap_or(0);
-    let tags = store.list_tags().unwrap_or_default();
-    let by_kind = store.count_by_kind().unwrap_or_default();
+    let (memories, count, tags, by_kind) = with_store(&state, |store| {
+        (
+            store.list(None, 10000).unwrap_or_default(),
+            store.count().unwrap_or(0),
+            store.list_tags().unwrap_or_default(),
+            store.count_by_kind().unwrap_or_default(),
+        )
+    })
+    .await;
 
     let mut kind_rows = String::new();
     for (kind, cnt) in &by_kind {
@@ -158,16 +178,19 @@ async fn dashboard(State(state): State<AppState>) -> Html<String> {
 }
 
 async fn api_memories(State(state): State<AppState>) -> String {
-    let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-    let memories = store.list(None, 10000).unwrap_or_default();
+    let memories = with_store(&state, |store| store.list(None, 10000).unwrap_or_default()).await;
     serde_json::to_string_pretty(&memories).unwrap()
 }
 
 async fn api_stats(State(state): State<AppState>) -> String {
-    let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-    let count = store.count().unwrap_or(0);
-    let by_kind = store.count_by_kind().unwrap_or_default();
-    let tags = store.list_tags().unwrap_or_default();
+    let (count, by_kind, tags) = with_store(&state, |store| {
+        (
+            store.count().unwrap_or(0),
+            store.count_by_kind().unwrap_or_default(),
+            store.list_tags().unwrap_or_default(),
+        )
+    })
+    .await;
 
     serde_json::to_string_pretty(&serde_json::json!({
         "total": count,
