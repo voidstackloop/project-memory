@@ -47,6 +47,14 @@ want.
 
 ### Notes
 
+- The servers bind to `127.0.0.1` by default (safe for plain local use —
+  nothing on your LAN can reach them). `docker-compose.yml` sets
+  `PMEM_HOST=0.0.0.0` for each service so Docker's port mapping can
+  actually reach the process inside the container; a bare `127.0.0.1`
+  bind is only visible from loopback *inside* that container's own
+  network namespace, not from the host via `-p`, even though the process
+  starts up looking fine. Set `PMEM_HOST` yourself if you need these
+  servers reachable from another machine outside Docker.
 - Containers run as root — this setup is for local development, not
   production deployment.
 - The image does a full `cargo build --release` with no dependency-layer

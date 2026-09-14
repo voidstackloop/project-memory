@@ -28,7 +28,8 @@ pub async fn serve_dashboard(project_dir: PathBuf, port: u16) {
         .route("/api/stats", get(api_stats))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    let host = std::env::var("PMEM_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr = format!("{host}:{port}");
     println!("  Dashboard: http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr)

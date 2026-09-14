@@ -2,6 +2,8 @@ services:
   dashboard:
     build: .
     command: ["dashboard", "--port", "3778"]
+    environment:
+      - PMEM_HOST=0.0.0.0
     ports:
       - "3778:3778"
     volumes:
@@ -10,6 +12,8 @@ services:
   api:
     build: .
     command: ["api", "--port", "3779"]
+    environment:
+      - PMEM_HOST=0.0.0.0
     ports:
       - "3779:3779"
     volumes:
@@ -18,6 +22,8 @@ services:
   mcp:
     build: .
     command: ["serve", "--port", "3777"]
+    environment:
+      - PMEM_HOST=0.0.0.0
     ports:
       - "3777:3777"
     volumes:

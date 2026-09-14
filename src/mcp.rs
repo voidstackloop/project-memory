@@ -20,7 +20,8 @@ pub async fn serve(project_dir: PathBuf, port: u16) {
 
     let app = Router::new().route("/mcp", post(handle_mcp)).with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    let host = std::env::var("PMEM_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr = format!("{host}:{port}");
     println!("  MCP endpoint: http://{addr}/mcp");
 
     let listener = tokio::net::TcpListener::bind(&addr)

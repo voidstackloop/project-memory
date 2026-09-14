@@ -37,7 +37,8 @@ pub async fn serve_api(project_dir: PathBuf, port: u16) {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    let host = std::env::var("PMEM_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr = format!("{host}:{port}");
     println!("  REST API: http://{addr}/api");
 
     let listener = tokio::net::TcpListener::bind(&addr)
