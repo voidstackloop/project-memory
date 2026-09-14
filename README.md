@@ -109,10 +109,11 @@ layer, and server transports fit together.
 
 [docs/BENCHMARK.md](docs/BENCHMARK.md) — [OpenCode](https://opencode.ai) (an
 independent third-party agent) connecting to and calling tools on `pmem
-stdio` over live MCP; a token-usage comparison showing `memory_context` is
-~67x cheaper than reading the source files that contain the same facts;
-performance at 100/1,000/5,000 memories; and binary size, cold-start,
-storage, and encryption-throughput numbers.
+stdio` over live MCP; a 50-query token-usage benchmark showing
+`memory_search` averages ~231x cheaper than reading the source files that
+contain the same facts (149–200 tokens across all 50, not one lucky
+example); performance at 100/1,000/5,000 memories; and binary size,
+cold-start, storage, and encryption-throughput numbers.
 
 ## Development
 

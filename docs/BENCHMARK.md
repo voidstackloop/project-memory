@@ -70,21 +70,27 @@ in the same session.
 
 ## 2. Token usage: memory vs. re-reading the source
 
-This is the actual value proposition, measured rather than asserted: 12 real
-facts about *this* codebase — conventions and decisions established while
-building it (encryption design, mutex-poisoning recovery, the atomic-merge
-transaction pattern, the Docker bind-address fix, and so on) — stored as
-`pmem` memories, versus the token cost of an agent reading the 8 source
-files that actually contain those same facts.
+This is the actual value proposition, measured rather than asserted with one
+cherry-picked example: 50 real facts about *this* codebase — bugs found and
+fixed, decisions made, benchmark results — recorded over the course of
+actually building and fixing it this session. Not synthetic filler; every
+one of them maps to real source or doc files an agent would otherwise have
+to read.
 
 Reproduce: `python3 scripts/token_benchmark.py` (needs `pip install
-tiktoken`; falls back to a chars/4 estimate without it).
+tiktoken`; falls back to a chars/4 estimate without it). It runs
+`memory_context` once, then **50 separate `memory_search` calls**, one
+plausible query per fact, and checks each response actually contains the
+fact it was searching for — a correctness check riding along with the token
+count. All 50 found their target.
 
 | | Tokens | vs. reading source |
 |---|---:|---:|
-| `memory_context` (all 12 facts, one call) | 508 | **67x cheaper** |
-| `memory_search` (one targeted query) | 156 | **219x cheaper** |
-| Reading `main.rs` + `store.rs` + `encryption.rs` + `mcp.rs` + `mcp_stdio.rs` + `api.rs` + `dashboard.rs` + `backup.rs` | 34,177 | — |
+| `memory_context` (all 50 facts, one call) | 2,022 | **19x cheaper** |
+| `memory_search`, mean of 50 queries | 168.3 | **231x cheaper** |
+| `memory_search`, min / median / max | 149 / 164.5 / 200 | — |
+| `memory_search`, stdev | 13.6 | tight — this isn't one lucky query |
+| Reading the 16 source/doc files that contain these facts | 38,921 | — |
 
 Per-file breakdown of the "reading source" side:
 
@@ -94,17 +100,31 @@ Per-file breakdown of the "reading source" side:
 | `src/store.rs` | 5,070 | 251 |
 | `src/mcp_stdio.rs` | 3,632 | 482 |
 | `src/dashboard.rs` | 1,994 | 177 |
-| `src/api.rs` | 1,127 | 123 |
+| `docs/BENCHMARK.md` | 1,706 | 153 |
 | `src/backup.rs` | 1,142 | 125 |
+| `src/api.rs` | 1,127 | 123 |
+| `README.md` | 1,068 | 129 |
 | `src/encryption.rs` | 810 | 61 |
+| `docs/DEVELOPMENT.md` | 635 | 66 |
+| `docs/ARCHITECTURE.md` | 454 | 47 |
+| `src/validation.rs` | 461 | 50 |
 | `src/mcp.rs` | 436 | 42 |
+| `Dockerfile` | 188 | 20 |
+| `docker-compose.yml` | 177 | 30 |
+| `docker-entrypoint.sh` | 55 | 5 |
 
-This isn't 12 facts vs. 12 lines of grep — an agent without stored memory
-doesn't know in advance which 12 lines matter, so the honest comparison is
-against the files those facts actually live in. The gap only widens as a
-project grows: the memory set stays roughly linear in the number of facts
-you choose to record, while the source you'd otherwise have to read grows
-with the codebase.
+This isn't 50 facts vs. 50 lines of grep — an agent without stored memory
+doesn't know in advance which lines matter, so the honest comparison is
+against the files those facts actually live in (source *and* docs, since
+several facts here are about Docker/README/architecture decisions, not
+Rust code). The `memory_context` multiplier dropped from an earlier
+12-fact/8-file run (67x) to 19x here, not because memory got more
+expensive but because the file set it's compared against grew alongside
+the fact count — a fairer comparison, not a better-looking one. The
+`memory_search` multiplier, which doesn't depend on how many facts happen
+to be stored, held steady (219x on one query earlier, 231x averaged over
+50 here) — that's the number that matters for "ask a specific question,"
+which is most of what an agent actually does.
 
 ## 3. Performance at scale
 
